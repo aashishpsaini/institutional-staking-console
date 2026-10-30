@@ -1,0 +1,113 @@
+:root {
+  font-family: "Segoe UI", Calibri, sans-serif;
+  color: #1c232d;
+  background: #f5f7fa;
+}
+
+body {
+  margin: 0;
+}
+
+.app {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 3rem;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0 1rem;
+  border-bottom: 1px solid #dce2e8;
+  margin-bottom: 1.25rem;
+}
+
+nav {
+  display: flex;
+  gap: 1rem;
+}
+
+nav a {
+  color: #1e648c;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+}
+
+th,
+td {
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border-bottom: 1px solid #e6ebf0;
+}
+
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  align-items: end;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+  padding: 0.4rem 0.55rem;
+}
+
+button {
+  background: #1e648c;
+  color: white;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.error {
+  color: #a33;
+}
+
+.muted {
+  color: #5f6976;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  background: #e8eef3;
+  font-size: 0.85rem;
+}
+
+.badge.confirmed {
+  background: #d9f5e7;
+}
+
+.badge.failed {
+  background: #fde2e2;
+}
+
+.badge.submitted,
+.badge.pending {
+  background: #fff4d6;
+}
+
+code {
+  font-family: Consolas, monospace;
+  font-size: 0.9em;
+}
