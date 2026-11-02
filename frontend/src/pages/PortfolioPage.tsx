@@ -1,104 +1,120 @@
 import { useEffect, useState } from "react";
 import { apiGet, apiPost } from "../api";
-
-type PortfolioResponse = {
-  data: Array<{
-    protocol: string;
-    balance: string;
-    total_rewards_received: string;
-    updated_at?: string;
-    started_at?: string;
-  }>;
-  last_synced_at?: string | null;
-};
+import { Alert } from "../components/Alert";
+import { EmptyState } from "../components/EmptyState";
+import { Loading } from "../components/Loading";
+import { StatCard } from "../components/StatCard";
+import { useAsync } from "../hooks/useAsync";
+import type { PortfolioResponse, SyncResponse } from "../types/portfolio";
+import { formatDate, formatDateTime, formatTokenAmount } from "../utils/formatters";
 
 export default function PortfolioPage() {
-  const [data, setData] = useState<PortfolioResponse | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
-
-  async function loadPortfolio() {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiGet<PortfolioResponse>("/api/v1/portfolio");
-      setData(res);
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [portfolioState, fetchPortfolio] = useAsync<PortfolioResponse>();
+  const [syncState, runSync] = useAsync<SyncResponse>();
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    loadPortfolio();
-  }, []);
+    void fetchPortfolio(() => apiGet<PortfolioResponse>("/api/v1/portfolio"));
+  }, [fetchPortfolio]);
 
-  async function handleSync() {
-    setSyncing(true);
-    setSyncMessage(null);
-    setError(null);
-    try {
-      await apiPost("/api/v1/sync/rewards", {});
-      setSyncMessage("Sync enqueued! Refreshing portfolio...");
-      setTimeout(async () => {
-        await loadPortfolio();
-        setSyncing(false);
-        setSyncMessage("Sync completed.");
+  const handleSync = async () => {
+    setNotice(null);
+    const result = await runSync(() => apiPost<SyncResponse>("/api/v1/sync/rewards", {}));
+
+    if (result) {
+      setNotice("Background rewards sync initiated across all networks. Refreshing portfolio…");
+      setTimeout(() => {
+        void fetchPortfolio(() => apiGet<PortfolioResponse>("/api/v1/portfolio"));
+        setNotice(null);
       }, 1500);
-    } catch (e) {
-      setError(String(e));
-      setSyncing(false);
     }
-  }
+  };
 
-  if (loading && !data) return <p>Loading portfolio…</p>;
-  if (error && !data) return <p className="error">{error}</p>;
+  const isSyncing = syncState.status === "loading";
 
   return (
     <section>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-        <h1>Portfolio</h1>
-        <button onClick={handleSync} disabled={syncing}>
-          {syncing ? "Syncing rewards…" : "Sync Rewards"}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
+        <div>
+          <h1>Institutional Portfolio</h1>
+          <p className="subtitle">Real-time custody balances and rewards aggregated through the chain service boundary.</p>
+        </div>
+        <button type="button" onClick={handleSync} disabled={isSyncing}>
+          {isSyncing ? "Syncing on-chain rewards…" : "Sync Rewards"}
         </button>
       </div>
 
-      <p className="muted">Last synced: {data?.last_synced_at ?? "Never"}</p>
-      {syncMessage && <p style={{ color: "#1e648c", fontWeight: 500 }}>{syncMessage}</p>}
-      {error && <p className="error">{error}</p>}
+      {notice && <Alert variant="success">{notice}</Alert>}
+      {syncState.status === "error" && <Alert variant="error">{syncState.error}</Alert>}
 
-      {!data?.data?.length ? (
-        <p>No portfolio rows yet. Run a sync above to fetch rewards.</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>Network</th>
-              <th>Staked Balance</th>
-              <th>Total Rewards Received</th>
-              <th>Started At</th>
-              <th>Last Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data.data.map((row) => (
-              <tr key={row.protocol}>
-                <td style={{ textTransform: "capitalize", fontWeight: 600 }}>{row.protocol}</td>
-                <td>
-                  <code>{row.balance}</code>
-                </td>
-                <td>
-                  <code>{row.total_rewards_received}</code>
-                </td>
-                <td>{row.started_at ? new Date(row.started_at).toLocaleDateString() : "—"}</td>
-                <td>{row.updated_at ? new Date(row.updated_at).toLocaleDateString() : "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {portfolioState.status === "loading" && <Loading message="Loading institutional portfolio balances…" />}
+      {portfolioState.status === "error" && <Alert variant="error">{portfolioState.error}</Alert>}
+
+      {portfolioState.status === "success" && (
+        <>
+          <div className="stat-grid">
+            <StatCard
+              title="Active Networks"
+              value={portfolioState.data.data.length.toString()}
+              subtitle="Ethereum & Solana positions"
+            />
+            <StatCard
+              title="Rewards Synced"
+              value={portfolioState.data.data.reduce((acc, curr) => acc + (BigInt(curr.total_rewards_received) > 0n ? 1 : 0), 0) > 0 ? "Active" : "Pending Sync"}
+              subtitle="Multi-network event rollups"
+              badge={<span className="badge confirmed">Ingested</span>}
+            />
+            <StatCard
+              title="Last Sync Timestamp"
+              value={portfolioState.data.last_synced_at ? formatDateTime(portfolioState.data.last_synced_at) : "Never"}
+              subtitle="Automated audit trail"
+            />
+          </div>
+
+          {portfolioState.data.data.length === 0 ? (
+            <EmptyState
+              message="No portfolio positions registered for this organization."
+              action={
+                <button type="button" onClick={handleSync} disabled={isSyncing}>
+                  Sync Rewards Now
+                </button>
+              }
+            />
+          ) : (
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Network</th>
+                    <th>Staked Position</th>
+                    <th>Total Rewards Received</th>
+                    <th>Position Started</th>
+                    <th>Last Balance Check</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {portfolioState.data.data.map((row) => (
+                    <tr key={row.protocol}>
+                      <td>
+                        <strong style={{ textTransform: "capitalize", fontSize: "1rem" }}>{row.protocol}</strong>
+                      </td>
+                      <td>
+                        <span className="token-readable">{formatTokenAmount(row.balance, row.protocol)}</span>
+                        <span className="token-raw"><code>{row.balance}</code></span>
+                      </td>
+                      <td>
+                        <span className="token-readable">{formatTokenAmount(row.total_rewards_received, row.protocol)}</span>
+                        <span className="token-raw"><code>{row.total_rewards_received}</code></span>
+                      </td>
+                      <td>{formatDate(row.started_at)}</td>
+                      <td>{formatDateTime(row.updated_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
     </section>
   );

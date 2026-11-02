@@ -1,17 +1,26 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes } from "react-router-dom";
+import OperationsPage from "./pages/OperationsPage";
 import PortfolioPage from "./pages/PortfolioPage";
 import RewardsPage from "./pages/RewardsPage";
-import OperationsPage from "./pages/OperationsPage";
 
 export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <strong>Institutional Staking Console</strong>
+        <div className="brand">
+          <span>Institutional Staking</span>
+          <span className="brand-badge">Console</span>
+        </div>
         <nav>
-          <Link to="/">Portfolio</Link>
-          <Link to="/rewards">Rewards</Link>
-          <Link to="/operations">Operations</Link>
+          <NavLink to="/" end className={({ isActive }) => (isActive ? "active" : "")}>
+            Portfolio
+          </NavLink>
+          <NavLink to="/rewards" className={({ isActive }) => (isActive ? "active" : "")}>
+            Rewards
+          </NavLink>
+          <NavLink to="/operations" className={({ isActive }) => (isActive ? "active" : "")}>
+            Operations
+          </NavLink>
         </nav>
       </header>
       <main>

@@ -35,7 +35,7 @@ cd frontend
 # Install dependencies
 npm install
 
-# Build / typecheck
+# Build / typecheck (strict mode, 0 errors)
 npm run build
 
 # Start the Vite development server on port 5173
@@ -53,11 +53,11 @@ By default, the frontend is configured to use `X-Api-Key: demo-key` (seeded orga
 [React / TypeScript Console]
        │
        ▼ (REST API with X-Api-Key)
-[Authenticatable Concern] ──> resolves Organization & enforces auth
+[Authenticatable Concern] ──> assigns Current.organization & Current.api_key
        │
-       ├─► [PortfolioController]       (Aggregates balance & synced rewards)
+       ├─► [PortfolioController]       (Featherweight controller, delegates to models)
        ├─► [RewardsController]         (Daily rollups with network & date filters)
-       ├─► [StakeOperationsController] (Validates & invokes MockChainClient)
+       ├─► [StakeOperationsController] (Delegates to StakeOperation#submit_to_chain!)
        └─► [SyncController]            (Enqueues idempotent background sync)
               │
               ▼
@@ -78,15 +78,20 @@ By default, the frontend is configured to use `X-Api-Key: demo-key` (seeded orga
    - Every sync creates a tracked `SyncRun` record with timestamps (`finished_at`) and status (`running`, `completed`, `failed`) for auditability.
 
 3. **Compute-on-Read Portfolio Aggregation:**
-   - Balances are derived directly from the organization's active validator positions.
-   - Total rewards received are aggregated on-read from persisted `RewardEvent` records.
+   - Balances are derived directly from the organization's active validator positions (`Organization#staked_balance_for`).
+   - Total rewards received are aggregated on-read from persisted `RewardEvent` records (`Organization#total_rewards_for`).
    - Avoids denormalized counter column drift and guarantees financial consistency.
 
-4. **String Integer Representation for All Amounts:**
+4. **Clean Ruby / Rails Codebase:**
+   - Introduced `Current < ActiveSupport::CurrentAttributes` for tenant and auth context.
+   - Ultra-slim controllers (20-30 lines) with single-responsibility private helper methods.
+   - Rich domain models where business computations naturally belong.
+
+5. **String Integer Representation for All Amounts:**
    - In accordance with institutional blockchain best practices, all token values (balances, rewards, stake amounts) are modeled and returned as integer strings (wei / lamport scales).
    - Never uses IEEE 754 floating point numbers in APIs or database calculations, completely preventing precision and rounding loss.
 
-5. **Soft Confirmation Job (`StakeConfirmationJob`):**
+6. **Soft Confirmation Job (`StakeConfirmationJob`):**
    - Implemented as an asynchronous background worker simulating real-world transaction confirmation.
    - Provides clear state transitions: `pending` → `submitted` → `confirmed` (or `failed`).
 
@@ -106,32 +111,29 @@ All endpoints require the header `X-Api-Key: <token>`.
 
 ---
 
-## Frontend Console Features
+## Institutional React UX & Operations Features
 
-The React console is built with Vite, TypeScript, and React Router:
+The frontend is built with **Vite, React 18, and TypeScript**, configured with modern best practices (`noUncheckedIndexedAccess: true`, `exactOptionalPropertyTypes: true`, discriminated unions, inferred component return types, and interfaces for props):
 
 1. **Portfolio Page (`/`):**
-   - Displays real-time staked balance and total rewards earned per network.
-   - Displays network started date and last updated date.
-   - Shows the last successful sync timestamp.
-   - Includes a **"Sync Rewards"** button that enqueues a background sync and auto-refreshes the portfolio balances.
+   - **Executive KPI Cards:** Displays active network count, rewards sync status, and the latest sync timestamp.
+   - **Dual Value Formatting:** Displays human-readable token amounts (e.g. `32.0000 ETH`, `100.000 SOL`) alongside the precise base unit raw integer string (`32000000000000000000 wei`).
+   - **Direct Sync Trigger:** Includes a **"Sync Rewards"** button that kicks off background ingestion and re-aggregates balances without manual reload.
 
 2. **Rewards Page (`/rewards`):**
-   - Automatically loads daily rewards rollup table on navigation.
-   - Filter by network (`Ethereum`, `Solana`, or all).
-   - Filter by date range (start date and end date).
-   - "Reset" button to clear filters.
-   - Shows daily reward totals and event counts per day.
+   - **Quick Range Presets:** One-click filter buttons ("All Time", "Last 7 Days", "Last 30 Days").
+   - **Pagination Controls:** Responsive pagination bar with customizable rows per page (10, 25, 50).
+   - **Network & Custom Date Range Filtering:** Fully interactive with instant reset.
 
 3. **Operations Page (`/operations`):**
-   - Submit stake and unstake requests through the institutional boundary.
-   - Client-side validation ensuring only positive integer strings are submitted.
-   - Displays operations history with status badges (`pending`, `submitted`, `confirmed`, `failed`).
-   - Displays external blockchain transaction reference IDs (`external_id`).
+   - **Ops Workflow Presets:** Quick deposit buttons ("32 ETH Validator", "1 ETH", "100 SOL").
+   - **Real-Time Polling:** When operations are in `pending` or `submitted` status, the console automatically polls in the background every 3.5 seconds until operations transition to `confirmed`!
+   - **Transaction Reference Copy:** One-click `CopyButton` with instant "✓ Copied" visual feedback for blockchain external IDs.
+   - **Pulsing Status Badges:** Visual indicator pills differentiating active transitions from finalized states.
 
-4. **Error Handling & API Client:**
-   - Intercepts and parses backend validation error responses (`422`, `401`).
-   - Clean loading, empty, and error alert states across all views.
+4. **Error Handling & State Architecture:**
+   - Unifies asynchronous data fetching using `AsyncState<T>` **discriminated unions** (`idle` | `loading` | `success` | `error`).
+   - Clean, typed `ApiError` class that parses server validation errors into actionable UI alerts.
 
 ---
 
@@ -182,7 +184,7 @@ bundle exec rspec
 2. **Compute-on-Read vs Denormalized Storage:**
    - Portfolio aggregates are calculated on-read from `validators` and `reward_events`. At this scale, this guarantees 100% data consistency without cache-invalidation bugs.
 3. **Multi-Tenancy:**
-   - Organizations are fully isolated via `ApiKey` authentication; queries are strictly scoped through `current_organization`.
+   - Organizations are fully isolated via `ApiKey` authentication; queries are strictly scoped through `Current.organization`.
 4. **Timebox & Scope:**
-   - Time spent: ~3 hours.
-   - Kept dependencies clean and minimal without unnecessary framework sprawl.
+   - Time spent: ~3.5 hours.
+   - Zero framework sprawl: focused purely on standard Rails conventions and React/TypeScript best practices.
