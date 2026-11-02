@@ -4,30 +4,49 @@ module Api
   module V1
     class StakeOperationsController < ApplicationController
       def index
-        ops = current_organization.stake_operations.order(created_at: :desc).limit(100)
-        render json: {
-          data: ops.map { |op| serialize(op) }
-        }
+        ops = current_organization.stake_operations
+                .includes(:network)
+                .order(created_at: :desc)
+                .limit(100)
+
+        render json: { data: ops.map { |op| serialize(op) } }
       end
 
       def create
-        network = Network.find_by(slug: params.require(:network))
+        network = Network.find_by(slug: params[:network])
         return render json: { error: "unknown_network" }, status: :unprocessable_entity unless network
 
-        op = current_organization.stake_operations.new(
+        amount_str = params[:amount].to_s
+        unless amount_str.match?(/\A[1-9]\d*\z/)
+          return render json: {
+            error: "validation_failed",
+            details: ["Amount must be a positive integer string"]
+          }, status: :unprocessable_entity
+        end
+
+        action_value = request.request_parameters["action"] || request.request_parameters[:action] || params[:action_name]
+        unless StakeOperation::ACTIONS.include?(action_value)
+          return render json: {
+            error: "validation_failed",
+            details: ["Action must be one of: #{StakeOperation::ACTIONS.join(', ')}"]
+          }, status: :unprocessable_entity
+        end
+
+        op = current_organization.stake_operations.create!(
           network: network,
-          action: params.require(:action),
-          amount: params.require(:amount).to_s,
+          action: action_value,
+          amount: amount_str,
           status: "pending"
         )
 
-        unless op.valid?
-          return render json: { error: "validation_failed", details: op.errors.full_messages }, status: :unprocessable_entity
-        end
+        # Submit through the service boundary — never call chain details inline
+        client = ChainClients::MockChainClient.new
+        result = client.submit_stake(op)
+        op.update!(external_id: result[:external_id], status: result[:status])
 
-        # TODO(candidate): persist, call ChainClients::MockChainClient#submit_stake,
-        # set external_id + status=submitted (or enqueue confirmation job)
-        render json: { error: "not_implemented", hint: "Wire ChainClient submit + persist operation" }, status: :not_implemented
+        render json: { data: serialize(op) }, status: :created
+      rescue ActiveRecord::RecordInvalid => e
+        render json: { error: "validation_failed", details: e.record.errors.full_messages }, status: :unprocessable_entity
       end
 
       private
