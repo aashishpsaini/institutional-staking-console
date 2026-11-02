@@ -5,38 +5,34 @@ class SyncRewardsJob < ApplicationJob
 
   def perform(organization_id, from: 7.days.ago.to_date, to: Date.today)
     organization = Organization.find(organization_id)
-    client = ChainClients::MockChainClient.new
-
     sync_run = organization.sync_runs.create!(kind: "rewards", status: "running")
 
-    begin
-      rows = client.fetch_rewards(organization, from: from, to: to)
-      inserted = 0
-
-      rows.each do |row|
-        network = Network.find_by!(slug: row[:network])
-
-        # Idempotent upsert — external_id has a unique index
-        event = RewardEvent.find_or_initialize_by(external_id: row[:external_id])
-        next if event.persisted?
-
-        event.assign_attributes(
-          organization: organization,
-          network: network,
-          validator_ref: row[:validator_ref],
-          reward_date: row[:date],
-          amount: row[:amount].to_s
-        )
-        event.save!
-        inserted += 1
-      end
-
-      sync_run.update!(status: "completed", finished_at: Time.current)
-      Rails.logger.info("[SyncRewardsJob] org=#{organization.id} fetched=#{rows.size} inserted=#{inserted}")
-    rescue => e
-      sync_run.update!(status: "failed", finished_at: Time.current)
-      Rails.logger.error("[SyncRewardsJob] org=#{organization.id} error=#{e.message}")
-      raise
-    end
+    ingest_rewards(organization, from: from, to: to)
+    sync_run.update! status: "completed", finished_at: Time.current
+  rescue => e
+    sync_run&.update status: "failed", finished_at: Time.current
+    raise
   end
+
+  private
+    def ingest_rewards(organization, from:, to:)
+      client = ChainClients::MockChainClient.new
+
+      client.fetch_rewards(organization, from: from, to: to).each do |row|
+        upsert_reward(organization, row)
+      end
+    end
+
+    def upsert_reward(organization, row)
+      event = RewardEvent.find_or_initialize_by(external_id: row[:external_id])
+      return if event.persisted?
+
+      event.update!(
+        organization: organization,
+        network: Network.find_by!(slug: row[:network]),
+        validator_ref: row[:validator_ref],
+        reward_date: row[:date],
+        amount: row[:amount].to_s
+      )
+    end
 end

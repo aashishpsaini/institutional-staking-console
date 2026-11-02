@@ -1,8 +1,8 @@
 # frozen_string_literal: true
 
 class SyncRun < ApplicationRecord
-  STATUSES = %w[running completed failed].freeze
-  KINDS = %w[rewards].freeze
+  STATUSES = %w[ running completed failed ].freeze
+  KINDS = %w[ rewards ].freeze
 
   belongs_to :organization
 
@@ -10,5 +10,8 @@ class SyncRun < ApplicationRecord
   validates :status, inclusion: { in: STATUSES }
 
   scope :completed, -> { where(status: "completed") }
-  scope :latest_for, ->(kind) { where(kind: kind).order(finished_at: :desc).first }
+
+  def self.latest_rewards_sync
+    where(kind: "rewards", status: "completed").order(finished_at: :desc).first
+  end
 end

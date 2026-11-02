@@ -4,6 +4,8 @@ class Validator < ApplicationRecord
   belongs_to :organization
   belongs_to :network
 
-  validates :external_ref, presence: true, uniqueness: { scope: %i[organization_id network_id] }
+  validates :external_ref, presence: true, uniqueness: { scope: %i[ organization_id network_id ] }
   validates :balance, presence: true
+
+  scope :for_network, ->(network) { where(network: network) }
 end

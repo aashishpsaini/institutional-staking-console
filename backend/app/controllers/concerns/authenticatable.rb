@@ -4,20 +4,22 @@ module Authenticatable
   extend ActiveSupport::Concern
 
   included do
-    before_action :authenticate!
+    before_action :authenticate
   end
 
   private
+    def authenticate
+      Current.api_key = ApiKey.find_by(token: api_key_token) if api_key_token.present?
+      Current.organization = Current.api_key&.organization
 
-  def authenticate!
-    token = request.headers["X-Api-Key"].presence
-    @current_api_key = ApiKey.find_by(token: token) if token
-    return if @current_api_key
+      render json: { error: "unauthorized" }, status: :unauthorized unless Current.organization
+    end
 
-    render json: { error: "unauthorized" }, status: :unauthorized
-  end
+    def api_key_token
+      request.headers["X-Api-Key"].presence
+    end
 
-  def current_organization
-    @current_api_key.organization
-  end
+    def current_organization
+      Current.organization
+    end
 end

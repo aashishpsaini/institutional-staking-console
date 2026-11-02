@@ -4,9 +4,7 @@ class StakeConfirmationJob < ApplicationJob
   queue_as :default
 
   def perform(stake_operation_id)
-    op = StakeOperation.find(stake_operation_id)
-    return unless op.status == "submitted"
-
-    op.update!(status: "confirmed")
+    operation = StakeOperation.find(stake_operation_id)
+    operation.update! status: "confirmed" if operation.status == "submitted"
   end
 end
