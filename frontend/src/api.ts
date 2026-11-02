@@ -1,6 +1,23 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 const API_KEY = import.meta.env.VITE_API_KEY ?? "demo-key";
 
+async function handleError(res: Response, _path: string): Promise<never> {
+  let message = `${res.status} ${res.statusText}`;
+  try {
+    const errorBody = await res.json();
+    if (errorBody.details && Array.isArray(errorBody.details)) {
+      message = errorBody.details.join(", ");
+    } else if (errorBody.error) {
+      message = errorBody.error;
+    } else if (errorBody.message) {
+      message = errorBody.message;
+    }
+  } catch {
+    // response was not JSON
+  }
+  throw new Error(message);
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -9,7 +26,7 @@ export async function apiGet<T>(path: string): Promise<T> {
     }
   });
   if (!res.ok) {
-    throw new Error(`GET ${path} failed: ${res.status}`);
+    return handleError(res, path);
   }
   return res.json() as Promise<T>;
 }
@@ -25,7 +42,7 @@ export async function apiPost<T>(path: string, body: unknown): Promise<T> {
     body: JSON.stringify(body)
   });
   if (!res.ok) {
-    throw new Error(`POST ${path} failed: ${res.status}`);
+    return handleError(res, path);
   }
   return res.json() as Promise<T>;
 }

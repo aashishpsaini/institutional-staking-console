@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { apiGet } from "../api";
 
 type RewardsResponse = {
@@ -6,6 +6,7 @@ type RewardsResponse = {
     network: string;
     date: string;
     amount: string;
+    event_count?: number;
   }>;
 };
 
@@ -17,14 +18,14 @@ export default function RewardsPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function fetchRewards(filters = { network, start, end }) {
     setLoading(true);
     setError(null);
     const params = new URLSearchParams();
-    if (network) params.set("network", network);
-    if (start) params.set("start", start);
-    if (end) params.set("end", end);
+    if (filters.network) params.set("network", filters.network);
+    if (filters.start) params.set("start", filters.start);
+    if (filters.end) params.set("end", filters.end);
+
     try {
       const res = await apiGet<RewardsResponse>(`/api/v1/rewards?${params}`);
       setRows(res.data ?? []);
@@ -35,49 +36,74 @@ export default function RewardsPage() {
     }
   }
 
+  useEffect(() => {
+    fetchRewards({ network: "", start: "", end: "" });
+  }, []);
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    await fetchRewards({ network, start, end });
+  }
+
+  function handleReset() {
+    setNetwork("");
+    setStart("");
+    setEnd("");
+    fetchRewards({ network: "", start: "", end: "" });
+  }
+
   return (
     <section>
-      <h1>Rewards</h1>
+      <h1>Rewards Reporting</h1>
       <form className="filters" onSubmit={onSubmit}>
         <label>
           Network
           <select value={network} onChange={(e) => setNetwork(e.target.value)}>
-            <option value="">All</option>
-            <option value="ethereum">ethereum</option>
-            <option value="solana">solana</option>
+            <option value="">All Networks</option>
+            <option value="ethereum">Ethereum</option>
+            <option value="solana">Solana</option>
           </select>
         </label>
         <label>
-          Start
+          Start Date
           <input type="date" value={start} onChange={(e) => setStart(e.target.value)} />
         </label>
         <label>
-          End
+          End Date
           <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} />
         </label>
         <button type="submit" disabled={loading}>
-          {loading ? "Loading…" : "Apply"}
+          {loading ? "Loading…" : "Apply Filters"}
+        </button>
+        <button type="button" onClick={handleReset} disabled={loading} style={{ background: "#6c757d" }}>
+          Reset
         </button>
       </form>
+
       {error && <p className="error">{error}</p>}
-      {!error && !rows.length && <p>No rows. Implement rewards API, then filter.</p>}
+      {!error && !loading && !rows.length && (
+        <p>No rewards found for the selected criteria. Ensure rewards have been synced from the Portfolio page.</p>
+      )}
+
       {!!rows.length && (
         <table>
           <thead>
             <tr>
               <th>Date</th>
               <th>Network</th>
-              <th>Amount</th>
+              <th>Total Daily Reward</th>
+              <th>Events Count</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={`${r.network}-${r.date}-${r.amount}`}>
                 <td>{r.date}</td>
-                <td>{r.network}</td>
+                <td style={{ textTransform: "capitalize", fontWeight: 600 }}>{r.network}</td>
                 <td>
                   <code>{r.amount}</code>
                 </td>
+                <td>{r.event_count ?? 1}</td>
               </tr>
             ))}
           </tbody>
