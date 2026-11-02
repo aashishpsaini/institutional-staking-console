@@ -26,3 +26,4 @@ RSpec.describe StakeConfirmationJob, type: :job do
     expect(op.reload.status).to eq("failed")
   end
 end
+

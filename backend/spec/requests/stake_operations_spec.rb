@@ -115,3 +115,4 @@ RSpec.describe "Stake Operations API", type: :request do
     end
   end
 end
+

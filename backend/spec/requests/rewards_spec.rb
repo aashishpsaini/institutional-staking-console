@@ -91,3 +91,4 @@ RSpec.describe "Rewards API", type: :request do
     end
   end
 end
+
