@@ -7,11 +7,17 @@ class Organization < ApplicationRecord
   has_many :stake_operations, dependent: :destroy
   has_many :sync_runs, dependent: :destroy
 
+  validates :name, presence: true
+
   def staked_balance_for(network)
-    validators.for_network(network).sum { _1.balance.to_i }.to_s
+    AmountMath.sum(validators.for_network(network).pluck(:balance))
   end
 
   def total_rewards_for(network)
-    reward_events.for_network(network).sum { _1.amount.to_i }.to_s
+    AmountMath.sum(reward_events.for_network(network).pluck(:amount))
+  end
+
+  def last_rewards_synced_at
+    sync_runs.latest_completed(:rewards)&.finished_at
   end
 end

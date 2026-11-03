@@ -5,10 +5,14 @@ Rails.application.routes.draw do
     namespace :v1 do
       get "portfolio", to: "portfolio#show"
       get "rewards", to: "rewards#index"
-      resources :stake_operations, only: %i[index create]
+      resources :networks, only: :index
+      resources :stake_operations, only: %i[index show create]
       post "sync/rewards", to: "sync#rewards"
+      get "sync/runs/:id", to: "sync#show", as: :sync_run
     end
   end
 
-  get "health", to: proc { [200, { "Content-Type" => "application/json" }, ['{"status":"ok"}']] }
+  get "health", to: proc { [ 200, { "Content-Type" => "application/json" }, [ '{"status":"ok"}' ] ] }
+
+  match "*unmatched", to: "errors#not_found", via: :all
 end

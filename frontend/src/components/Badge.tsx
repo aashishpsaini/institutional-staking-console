@@ -1,11 +1,9 @@
-import { ReactNode } from "react";
-import type { OperationStatus } from "../types/operations";
+import type { OperationStatus, SyncRunStatus } from "../types/api";
 
 interface BadgeProps {
-  readonly status: OperationStatus | string;
-  readonly children: ReactNode;
+  readonly status: OperationStatus | SyncRunStatus;
 }
 
-export function Badge({ status, children }: BadgeProps) {
-  return <span className={`badge ${status}`}>{children}</span>;
+export function Badge({ status }: BadgeProps) {
+  return <span className={`badge ${status}`}>{status}</span>;
 }

@@ -34,6 +34,7 @@ export function Pagination({
             <select
               value={pageSize}
               onChange={(e) => onPageSizeChange(Number(e.target.value))}
+              aria-label="Rows per page"
             >
               <option value={10}>10</option>
               <option value={25}>25</option>

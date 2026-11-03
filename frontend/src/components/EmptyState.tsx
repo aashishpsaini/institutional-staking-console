@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import type { ReactNode } from "react";
 
 interface EmptyStateProps {
   readonly message: string;
@@ -7,7 +7,7 @@ interface EmptyStateProps {
 
 export function EmptyState({ message, action }: EmptyStateProps) {
   return (
-    <div style={{ padding: "1.5rem 0", color: "#5f6976" }}>
+    <div className="empty-state">
       <p>{message}</p>
       {action}
     </div>

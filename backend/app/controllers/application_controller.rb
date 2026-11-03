@@ -1,9 +1,14 @@
 # frozen_string_literal: true
 
 class ApplicationController < ActionController::API
+  include ErrorHandling
   include Authenticatable
 
-  rescue_from ActiveRecord::RecordInvalid do |e|
-    render json: { error: "validation_failed", details: e.record.errors.full_messages }, status: :unprocessable_entity
-  end
+  around_action :tag_logs_with_organization
+
+  private
+    # Tags every log line for the request with the tenant; the API key itself is never logged.
+    def tag_logs_with_organization(&)
+      logger.tagged("org=#{Current.organization&.id}", &)
+    end
 end

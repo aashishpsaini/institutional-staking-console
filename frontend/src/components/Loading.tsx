@@ -3,5 +3,9 @@ interface LoadingProps {
 }
 
 export function Loading({ message = "Loading…" }: LoadingProps) {
-  return <p className="muted">{message}</p>;
+  return (
+    <p className="muted" role="status" aria-live="polite">
+      {message}
+    </p>
+  );
 }

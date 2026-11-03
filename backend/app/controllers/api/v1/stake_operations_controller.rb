@@ -3,45 +3,38 @@
 module Api
   module V1
     class StakeOperationsController < ApplicationController
-      before_action :set_network, only: :create
-      before_action :ensure_valid_operation, only: :create
+      LIST_LIMIT = 100
 
       def index
-        operations = Current.organization.stake_operations.includes(:network).order(created_at: :desc).limit(100)
-        render json: { data: operations.map(&:serialize) }
+        operations = Current.organization.stake_operations.includes(:network).recent.limit(LIST_LIMIT)
+        render json: { data: operations.map { StakeOperationSerializer.call(_1) } }
+      end
+
+      def show
+        operation = Current.organization.stake_operations.find(params[:id])
+        render json: { data: StakeOperationSerializer.call(operation) }
       end
 
       def create
-        operation = Current.organization.stake_operations.create!(
-          network: @network,
+        result = StakeOperations::Request.call(
+          organization: Current.organization,
+          network: network_param || raise(InvalidParameter.new(:unknown_network, "network is required")),
           action: operation_action,
-          amount: operation_amount
+          amount: params[:amount].to_s.strip,
+          idempotency_key: request.headers["Idempotency-Key"]
         )
 
-        operation.submit_to_chain!
-        render json: { data: operation.serialize }, status: :created
+        render json: { data: StakeOperationSerializer.call(result.operation) }, status: result.created ? :created : :ok
+      rescue StakeOperations::Request::IdempotencyConflict
+        render_error :idempotency_conflict, status: :conflict,
+                     message: "Idempotency-Key was already used with a different request body"
       end
 
       private
-        def set_network
-          @network = Network.find_by(slug: params[:network])
-          render json: { error: "unknown_network" }, status: :unprocessable_entity unless @network
-        end
-
-        def ensure_valid_operation
-          if operation_amount.blank? || !operation_amount.match?(/\A[1-9]\d*\z/)
-            render json: { error: "validation_failed", details: [ "Amount must be a positive integer string" ] }, status: :unprocessable_entity
-          elsif !StakeOperation::ACTIONS.include?(operation_action)
-            render json: { error: "validation_failed", details: [ "Action must be one of: #{StakeOperation::ACTIONS.join(', ')}" ] }, status: :unprocessable_entity
-          end
-        end
-
+        # `params[:action]` is reserved by Rails for the controller action name,
+        # so the JSON body's "action" field is read from the raw request parameters.
         def operation_action
-          request.request_parameters["action"] || params[:action_name]
-        end
-
-        def operation_amount
-          params[:amount].to_s
+          request.request_parameters["action"].to_s
         end
     end
   end

@@ -9,17 +9,13 @@ module Authenticatable
 
   private
     def authenticate
-      Current.api_key = ApiKey.find_by(token: api_key_token) if api_key_token.present?
-      Current.organization = Current.api_key&.organization
+      api_key = ApiKey.authenticate(request.headers["X-Api-Key"])
 
-      render json: { error: "unauthorized" }, status: :unauthorized unless Current.organization
-    end
-
-    def api_key_token
-      request.headers["X-Api-Key"].presence
-    end
-
-    def current_organization
-      Current.organization
+      if api_key
+        Current.api_key = api_key
+        Current.organization = api_key.organization
+      else
+        render_error :unauthorized, status: :unauthorized, message: "Missing or invalid X-Api-Key header"
+      end
     end
 end

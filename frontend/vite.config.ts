@@ -1,13 +1,16 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+// Override with API_PROXY_TARGET=http://localhost:3001 npm run dev if :3000 is taken.
+const apiTarget = process.env.API_PROXY_TARGET ?? "http://localhost:3000";
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://localhost:3000",
-      "/health": "http://localhost:3000"
+      "/api": apiTarget,
+      "/health": apiTarget
     }
   }
 });

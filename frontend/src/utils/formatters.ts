@@ -1,73 +1,77 @@
+import type { Network } from "../types/api";
+
+const BASE_UNITS = /^\d+$/;
+const TOKEN_INPUT = /^(\d+)(?:\.(\d*))?$/;
+
+function groupThousands(digits: string): string {
+  return digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+}
+
 /**
- * Formats large blockchain integer strings into human-readable token amounts
- * while maintaining precision awareness.
- * 
- * Ethereum: 1 ETH = 10^18 wei (or toy scale if mock)
- * Solana: 1 SOL = 10^9 lamports
+ * Converts a base-unit integer string (wei, lamports) into a token string,
+ * e.g. formatUnits("1500000000000000000", 18) → "1.5". Pure BigInt/string math,
+ * so 18-decimal amounts never lose precision through IEEE floats.
  */
-export function formatTokenAmount(amount: string, network: string): string {
-  try {
-    const raw = BigInt(amount);
-    const slug = network.toLowerCase();
+export function formatUnits(raw: string, decimals: number, maxFractionDigits = 6): string {
+  if (!BASE_UNITS.test(raw)) return raw;
 
-    if (slug === "ethereum") {
-      // 18 decimals (standard wei)
-      if (raw >= 10n ** 18n) {
-        const whole = raw / 10n ** 18n;
-        const remainder = raw % 10n ** 18n;
-        const decimals = (remainder / 10n ** 14n).toString().padStart(4, "0");
-        return `${whole.toLocaleString()}.${decimals} ETH`;
-      }
-      // Smaller mock scale (1e11 toy scale from mock chain client)
-      if (raw >= 10n ** 7n) {
-        return `${Number(raw) / 1e7} ETH (est)`;
-      }
-      return `${raw.toLocaleString()} wei`;
-    }
+  const value = BigInt(raw);
+  const base = 10n ** BigInt(decimals);
+  const whole = groupThousands((value / base).toString());
+  const fraction = (value % base).toString().padStart(decimals, "0").slice(0, maxFractionDigits).replace(/0+$/, "");
 
-    if (slug === "solana") {
-      // 9 decimals (lamports)
-      if (raw >= 10n ** 9n) {
-        const whole = raw / 10n ** 9n;
-        const remainder = raw % 10n ** 9n;
-        const decimals = (remainder / 10n ** 6n).toString().padStart(3, "0");
-        return `${whole.toLocaleString()}.${decimals} SOL`;
-      }
-      return `${Number(raw) / 1e6} SOL (est)`;
-    }
-
-    return `${raw.toLocaleString()} units`;
-  } catch {
-    return amount;
-  }
+  if (fraction) return `${whole}.${fraction}`;
+  return value > 0n && value < base ? `<0.${"0".repeat(Math.max(maxFractionDigits - 1, 0))}1` : whole;
 }
 
-export function formatDate(isoString?: string | null): string {
-  if (!isoString) return "—";
-  try {
-    const date = new Date(isoString);
-    return isNaN(date.getTime()) ? "—" : date.toLocaleDateString(undefined, {
-      year: "numeric",
-      month: "short",
-      day: "numeric"
-    });
-  } catch {
-    return "—";
-  }
+/**
+ * Inverse of formatUnits for user input: parseUnits("1.5", 18) → "1500000000000000000".
+ * Returns null for malformed input or more fractional digits than the token supports.
+ */
+export function parseUnits(input: string, decimals: number): string | null {
+  const match = TOKEN_INPUT.exec(input.trim());
+  if (!match) return null;
+
+  const [, whole = "0", fraction = ""] = match;
+  if (fraction.length > decimals) return null;
+
+  return (BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, "0") || "0")).toString();
 }
 
-export function formatDateTime(isoString?: string | null): string {
+export function formatTokenAmount(raw: string, network: Network | undefined): string {
+  if (!network) return raw;
+  return `${formatUnits(raw, network.decimals)} ${network.symbol}`;
+}
+
+export function sumAmounts(amounts: readonly string[]): string {
+  return amounts.reduce((total, amount) => total + BigInt(amount), 0n).toString();
+}
+
+export function formatDate(isoDate: string | null | undefined): string {
+  if (!isoDate) return "—";
+  // Date-only strings are parsed as local dates; `new Date("2024-06-01")` would be UTC midnight
+  // and render as the previous day west of Greenwich.
+  const [year, month, day] = isoDate.slice(0, 10).split("-").map(Number);
+  if (!year || !month || !day) return "—";
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+export function formatDateTime(isoString: string | null | undefined): string {
   if (!isoString) return "—";
-  try {
-    const date = new Date(isoString);
-    return isNaN(date.getTime()) ? "—" : date.toLocaleString(undefined, {
-      month: "short",
-      day: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit"
-    });
-  } catch {
-    return "—";
-  }
+  const date = new Date(isoString);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/** Local calendar date as YYYY-MM-DD (toISOString() would shift to UTC). */
+export function toISODate(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+
+export function daysAgo(days: number, from: Date = new Date()): string {
+  const date = new Date(from);
+  date.setDate(date.getDate() - days);
+  return toISODate(date);
 }

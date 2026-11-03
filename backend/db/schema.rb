@@ -10,14 +10,16 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
+ActiveRecord::Schema[7.1].define(version: 2024_01_02_000000) do
   create_table "api_keys", force: :cascade do |t|
     t.integer "organization_id", null: false
-    t.string "token", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "token_digest", null: false
+    t.datetime "revoked_at"
+    t.datetime "last_used_at"
     t.index ["organization_id"], name: "index_api_keys_on_organization_id"
-    t.index ["token"], name: "index_api_keys_on_token", unique: true
+    t.index ["token_digest"], name: "index_api_keys_on_token_digest", unique: true
   end
 
   create_table "networks", force: :cascade do |t|
@@ -25,6 +27,8 @@ ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
     t.string "display_name", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "symbol"
+    t.integer "decimals"
     t.index ["slug"], name: "index_networks_on_slug", unique: true
   end
 
@@ -43,8 +47,8 @@ ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
     t.string "external_id", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
-    t.index ["external_id"], name: "index_reward_events_on_external_id", unique: true
     t.index ["network_id"], name: "index_reward_events_on_network_id"
+    t.index ["organization_id", "external_id"], name: "index_reward_events_on_organization_id_and_external_id", unique: true
     t.index ["organization_id", "network_id", "reward_date"], name: "idx_rewards_org_network_date"
     t.index ["organization_id"], name: "index_reward_events_on_organization_id"
   end
@@ -59,8 +63,10 @@ ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
     t.text "error_message"
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.string "idempotency_key"
     t.index ["network_id"], name: "index_stake_operations_on_network_id"
     t.index ["organization_id", "created_at"], name: "index_stake_operations_on_organization_id_and_created_at"
+    t.index ["organization_id", "idempotency_key"], name: "index_stake_operations_on_organization_id_and_idempotency_key", unique: true
     t.index ["organization_id"], name: "index_stake_operations_on_organization_id"
   end
 
@@ -68,9 +74,15 @@ ActiveRecord::Schema[7.1].define(version: 2024_01_01_000000) do
     t.integer "organization_id", null: false
     t.string "kind", null: false
     t.datetime "finished_at"
-    t.string "status", default: "running", null: false
+    t.string "status", default: "queued", null: false
     t.datetime "created_at", null: false
     t.datetime "updated_at", null: false
+    t.date "from_date"
+    t.date "to_date"
+    t.datetime "started_at"
+    t.integer "records_upserted", default: 0, null: false
+    t.text "error_message"
+    t.index ["organization_id", "kind", "finished_at"], name: "index_sync_runs_on_organization_id_and_kind_and_finished_at"
     t.index ["organization_id"], name: "index_sync_runs_on_organization_id"
   end
 

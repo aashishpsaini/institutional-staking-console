@@ -450,3 +450,269 @@ code {
   background: #f8fafc;
   border-color: #94a3b8;
 }
+/* Layout helpers */
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.quick-filters-label {
+  font-size: 0.85rem;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.grow {
+  flex: 1;
+}
+
+.inline {
+  display: flex;
+  align-items: center;
+}
+
+.capitalize {
+  text-transform: capitalize;
+  font-weight: 600;
+}
+
+.action-cell {
+  text-transform: uppercase;
+  font-size: 0.82em;
+  font-weight: 700;
+}
+
+.hint,
+.field-error {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: normal;
+  margin-top: 0.25rem;
+}
+
+.hint {
+  color: #64748b;
+  word-break: break-all;
+}
+
+.field-error {
+  color: #b91c1c;
+}
+
+.empty-state {
+  padding: 1.5rem 0;
+  color: #5f6976;
+}
+
+.info-msg {
+  background: #eff6ff;
+  color: #1e40af;
+  border: 1px solid #bfdbfe;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  margin-bottom: 1rem;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: inherit;
+  text-decoration: underline;
+  padding: 0;
+  font-weight: 600;
+}
+
+.btn-link:hover:not(:disabled) {
+  background: none;
+}
+
+.summary-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.summary-item {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  min-width: 200px;
+}
+
+.badge.queued,
+.badge.running {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.table-container[aria-busy="true"] {
+  opacity: 0.7;
+  transition: opacity 0.15s;
+}
+
+@media (max-width: 640px) {
+  .page-header {
+    flex-direction: column;
+  }
+}
+
+/* Stake form */
+.stake-form {
+  background: white;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  margin-bottom: 1.25rem;
+}
+
+.stake-form-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  padding: 1.1rem 1.25rem;
+}
+
+.stake-form-row .grow {
+  min-width: 220px;
+}
+
+.stake-form-row select,
+.stake-form-row .input-affix,
+.segmented,
+.stake-submit {
+  height: 2.4rem;
+  box-sizing: border-box;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  gap: 3px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+}
+
+.segmented button {
+  background: transparent;
+  color: #475569;
+  padding: 0 0.9rem;
+  border-radius: 6px;
+  font-weight: 600;
+}
+
+.segmented button:hover:not(:disabled) {
+  background: #e2e8f0;
+}
+
+.segmented button.active {
+  background: white;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
+}
+
+.input-affix {
+  display: flex;
+  align-items: center;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: white;
+  overflow: hidden;
+}
+
+.input-affix:focus-within {
+  border-color: #0284c7;
+  box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.15);
+}
+
+.input-affix.invalid {
+  border-color: #f87171;
+}
+
+.input-affix input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  box-shadow: none;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.input-affix input:focus {
+  box-shadow: none;
+}
+
+.input-affix input::placeholder {
+  font-weight: 400;
+  color: #94a3b8;
+}
+
+.affix {
+  padding: 0 0.85rem;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  background: #f8fafc;
+  border-left: 1px solid #e2e8f0;
+  color: #475569;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.stake-submit {
+  min-width: 7.5rem;
+  padding: 0 1.25rem;
+}
+
+.stake-form-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.65rem 1.25rem;
+  border-top: 1px solid #f1f5f9;
+  background: #fafbfc;
+  border-radius: 0 0 8px 8px;
+}
+
+.quick-fill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.stake-form-footer .hint,
+.stake-form-footer .field-error {
+  margin-top: 0;
+}
+
+@media (max-width: 640px) {
+  .stake-form-row > * {
+    flex: 1 1 100%;
+  }
+
+  .segmented button {
+    flex: 1;
+  }
+}

@@ -1,110 +1,130 @@
-import { useEffect, useState } from "react";
-import { apiGet, apiPost } from "../api";
+import { useState } from "react";
+import { api } from "../api";
 import { Alert } from "../components/Alert";
 import { EmptyState } from "../components/EmptyState";
 import { Loading } from "../components/Loading";
 import { StatCard } from "../components/StatCard";
-import { useAsync } from "../hooks/useAsync";
-import type { PortfolioResponse, SyncResponse } from "../types/portfolio";
-import { formatDate, formatDateTime, formatTokenAmount } from "../utils/formatters";
+import { TokenAmount } from "../components/TokenAmount";
+import { useInterval } from "../hooks/useInterval";
+import { useQuery } from "../hooks/useQuery";
+import type { SyncRun } from "../types/api";
+import { formatDate, formatDateTime } from "../utils/formatters";
+
+const SYNC_POLL_MS = 1000;
 
 export default function PortfolioPage() {
-  const [portfolioState, fetchPortfolio] = useAsync<PortfolioResponse>();
-  const [syncState, runSync] = useAsync<SyncResponse>();
-  const [notice, setNotice] = useState<string | null>(null);
+  const portfolio = useQuery((signal) => api.portfolio(signal), []);
+  const [syncRun, setSyncRun] = useState<SyncRun | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [isRequestingSync, setIsRequestingSync] = useState(false);
 
-  useEffect(() => {
-    void fetchPortfolio(() => apiGet<PortfolioResponse>("/api/v1/portfolio"));
-  }, [fetchPortfolio]);
+  const isSyncing = isRequestingSync || syncRun?.status === "queued" || syncRun?.status === "running";
 
-  const handleSync = async () => {
-    setNotice(null);
-    const result = await runSync(() => apiPost<SyncResponse>("/api/v1/sync/rewards", {}));
+  // The API returns a SyncRun immediately (202); poll it until the background job finishes.
+  useInterval(
+    () => {
+      if (!syncRun) return;
+      api
+        .syncRun(syncRun.id)
+        .then((next) => {
+          setSyncRun(next);
+          if (next.status === "completed") portfolio.reload();
+        })
+        .catch((error: unknown) => {
+          setSyncError(error instanceof Error ? error.message : "Failed to check sync status");
+          setSyncRun(null);
+        });
+    },
+    SYNC_POLL_MS,
+    syncRun?.status === "queued" || syncRun?.status === "running"
+  );
 
-    if (result) {
-      setNotice("Background rewards sync initiated across all networks. Refreshing portfolio…");
-      setTimeout(() => {
-        void fetchPortfolio(() => apiGet<PortfolioResponse>("/api/v1/portfolio"));
-        setNotice(null);
-      }, 1500);
+  const startSync = async () => {
+    setSyncError(null);
+    setIsRequestingSync(true);
+    try {
+      setSyncRun(await api.syncRewards());
+    } catch (error) {
+      setSyncError(error instanceof Error ? error.message : "Failed to start sync");
+    } finally {
+      setIsRequestingSync(false);
     }
   };
 
-  const isSyncing = syncState.status === "loading";
+  const positions = portfolio.data?.data ?? [];
+  const activePositions = positions.filter((p) => p.validator_count > 0);
+  const validatorCount = positions.reduce((sum, p) => sum + p.validator_count, 0);
 
   return (
     <section>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "1rem" }}>
+      <div className="page-header">
         <div>
-          <h1>Institutional Portfolio</h1>
-          <p className="subtitle">Real-time custody balances and rewards aggregated through the chain service boundary.</p>
+          <h1>Portfolio</h1>
+          <p className="subtitle">Staked balances and rewards received per network, computed from synced chain data.</p>
         </div>
-        <button type="button" onClick={handleSync} disabled={isSyncing}>
-          {isSyncing ? "Syncing on-chain rewards…" : "Sync Rewards"}
+        <button type="button" onClick={startSync} disabled={isSyncing}>
+          {isSyncing ? "Syncing rewards…" : "Sync rewards"}
         </button>
       </div>
 
-      {notice && <Alert variant="success">{notice}</Alert>}
-      {syncState.status === "error" && <Alert variant="error">{syncState.error}</Alert>}
+      {syncError && <Alert variant="error">{syncError}</Alert>}
+      {syncRun?.status === "completed" && (
+        <Alert variant="success">
+          Sync complete — {syncRun.records_upserted} reward events reconciled for {formatDate(syncRun.from)} – {formatDate(syncRun.to)}.
+        </Alert>
+      )}
+      {syncRun?.status === "failed" && <Alert variant="error">Sync failed: {syncRun.error_message ?? "unknown error"}</Alert>}
 
-      {portfolioState.status === "loading" && <Loading message="Loading institutional portfolio balances…" />}
-      {portfolioState.status === "error" && <Alert variant="error">{portfolioState.error}</Alert>}
+      {portfolio.isLoading && <Loading message="Loading portfolio…" />}
+      {portfolio.error && (
+        <Alert variant="error">
+          {portfolio.error}{" "}
+          <button type="button" className="btn-link" onClick={portfolio.reload}>
+            Retry
+          </button>
+        </Alert>
+      )}
 
-      {portfolioState.status === "success" && (
+      {portfolio.data && (
         <>
           <div className="stat-grid">
+            <StatCard title="Networks staked" value={`${activePositions.length} / ${positions.length}`} subtitle="Networks with at least one validator" />
+            <StatCard title="Validators" value={String(validatorCount)} subtitle="Delegated positions across networks" />
             <StatCard
-              title="Active Networks"
-              value={portfolioState.data.data.length.toString()}
-              subtitle="Ethereum & Solana positions"
-            />
-            <StatCard
-              title="Rewards Synced"
-              value={portfolioState.data.data.reduce((acc, curr) => acc + (BigInt(curr.total_rewards_received) > 0n ? 1 : 0), 0) > 0 ? "Active" : "Pending Sync"}
-              subtitle="Multi-network event rollups"
-              badge={<span className="badge confirmed">Ingested</span>}
-            />
-            <StatCard
-              title="Last Sync Timestamp"
-              value={portfolioState.data.last_synced_at ? formatDateTime(portfolioState.data.last_synced_at) : "Never"}
-              subtitle="Automated audit trail"
+              title="Last rewards sync"
+              value={portfolio.data.meta.last_synced_at ? formatDateTime(portfolio.data.meta.last_synced_at) : "Never"}
+              subtitle={portfolio.data.meta.last_synced_at ? "Most recent completed sync" : "Run a sync to ingest rewards"}
             />
           </div>
 
-          {portfolioState.data.data.length === 0 ? (
-            <EmptyState
-              message="No portfolio positions registered for this organization."
-              action={
-                <button type="button" onClick={handleSync} disabled={isSyncing}>
-                  Sync Rewards Now
-                </button>
-              }
-            />
+          {positions.length === 0 ? (
+            <EmptyState message="No networks are configured yet." />
           ) : (
-            <div className="table-container">
+            <div className="table-container" aria-busy={portfolio.isRefreshing}>
               <table>
                 <thead>
                   <tr>
                     <th>Network</th>
-                    <th>Staked Position</th>
-                    <th>Total Rewards Received</th>
-                    <th>Position Started</th>
-                    <th>Last Balance Check</th>
+                    <th>Validators</th>
+                    <th>Staked balance</th>
+                    <th>Total rewards received</th>
+                    <th>Position started</th>
+                    <th>Balance updated</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {portfolioState.data.data.map((row) => (
-                    <tr key={row.protocol}>
+                  {positions.map((row) => (
+                    <tr key={row.network}>
                       <td>
-                        <strong style={{ textTransform: "capitalize", fontSize: "1rem" }}>{row.protocol}</strong>
+                        <strong className="token-readable">{row.network_details.display_name}</strong>
+                        <span className="token-raw">{row.network_details.symbol}</span>
+                      </td>
+                      <td>{row.validator_count}</td>
+                      <td>
+                        <TokenAmount amount={row.balance} network={row.network_details} />
                       </td>
                       <td>
-                        <span className="token-readable">{formatTokenAmount(row.balance, row.protocol)}</span>
-                        <span className="token-raw"><code>{row.balance}</code></span>
-                      </td>
-                      <td>
-                        <span className="token-readable">{formatTokenAmount(row.total_rewards_received, row.protocol)}</span>
-                        <span className="token-raw"><code>{row.total_rewards_received}</code></span>
+                        <TokenAmount amount={row.total_rewards_received} network={row.network_details} />
                       </td>
                       <td>{formatDate(row.started_at)}</td>
                       <td>{formatDateTime(row.updated_at)}</td>

@@ -3,20 +3,27 @@
 module Api
   module V1
     class SyncController < ApplicationController
+      DEFAULT_WINDOW = 7.days
+
+      # Returns the in-progress run instead of enqueuing a duplicate, so repeated
+      # clicks don't pile up jobs for the same tenant.
       def rewards
-        from = parse_date(params[:from]) || 7.days.ago.to_date
-        to = parse_date(params[:to]) || Date.today
+        sync_run = Current.organization.sync_runs.in_progress.find_by(kind: "rewards") || enqueue_rewards_sync
+        render json: { data: SyncRunSerializer.call(sync_run) }, status: :accepted
+      end
 
-        SyncRewardsJob.perform_later Current.organization.id, from: from, to: to
-
-        render json: { message: "rewards_sync_enqueued", from: from.iso8601, to: to.iso8601 }, status: :accepted
-      rescue Date::Error, TypeError
-        render json: { error: "invalid_date_format" }, status: :unprocessable_entity
+      def show
+        render json: { data: SyncRunSerializer.call(Current.organization.sync_runs.find(params[:id])) }
       end
 
       private
-        def parse_date(value)
-          value&.to_date
+        def enqueue_rewards_sync
+          to = date_param(:to) || Date.current
+          from = date_param(:from) || (to - DEFAULT_WINDOW)
+
+          Current.organization.sync_runs.create!(kind: "rewards", status: "queued", from_date: from, to_date: to).tap do
+            SyncRewardsJob.perform_later(_1.id)
+          end
         end
     end
   end

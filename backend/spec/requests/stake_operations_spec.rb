@@ -6,113 +6,142 @@ RSpec.describe "Stake Operations API", type: :request do
   let!(:org) { Organization.create!(name: "Test Org") }
   let!(:key) { ApiKey.create!(organization: org, token: "test-key") }
   let!(:other_org) { Organization.create!(name: "Other Org") }
-  let!(:eth) { Network.find_or_create_by!(slug: "ethereum") { |n| n.display_name = "Ethereum" } }
-  let!(:sol) { Network.find_or_create_by!(slug: "solana") { |n| n.display_name = "Solana" } }
-  let(:headers) { { "X-Api-Key" => "test-key", "Content-Type" => "application/json" } }
+  let!(:eth) { network!(:ethereum) }
+  let!(:sol) { network!(:solana) }
+  let!(:sol_validator) { Validator.create!(organization: org, network: sol, external_ref: "Stake111", balance: "1000") }
+
+  def create_operation(params, headers: auth_headers)
+    post "/api/v1/stake_operations", params: params.to_json, headers: headers
+  end
 
   describe "POST /api/v1/stake_operations" do
     let(:valid_params) { { network: "ethereum", action: "stake", amount: "1000000000" } }
 
-    it "creates a stake operation and returns submitted status" do
-      post "/api/v1/stake_operations", params: valid_params.to_json, headers: headers
+    it "creates the operation, submits it through the chain client and returns 201" do
+      create_operation(valid_params)
 
       expect(response).to have_http_status(:created)
-      body = response.parsed_body["data"]
-      expect(body["status"]).to eq("submitted")
-      expect(body["external_id"]).to start_with("mock-stake-")
-      expect(body["amount"]).to eq("1000000000")
-      expect(body["network"]).to eq("ethereum")
-      expect(body["action"]).to eq("stake")
+      expect(response.parsed_body["data"]).to include(
+        "status" => "submitted", "amount" => "1000000000", "network" => "ethereum", "action" => "stake",
+        "external_id" => start_with("mock-stake-")
+      )
     end
 
-    it "creates an unstake operation" do
-      post "/api/v1/stake_operations",
-           params: { network: "solana", action: "unstake", amount: "500" }.to_json,
-           headers: headers
+    it "schedules confirmation polling for the submitted operation" do
+      expect { create_operation(valid_params) }.to have_enqueued_job(StakeConfirmationJob)
+    end
 
+    it "creates an unstake operation within the staked balance" do
+      create_operation({ network: "solana", action: "unstake", amount: "500" })
       expect(response).to have_http_status(:created)
-      expect(response.parsed_body["data"]["action"]).to eq("unstake")
+      expect(response.parsed_body.dig("data", "action")).to eq("unstake")
     end
 
-    it "rejects unknown network with 422" do
-      post "/api/v1/stake_operations",
-           params: { network: "cardano", action: "stake", amount: "1000" }.to_json,
-           headers: headers
+    it "rejects an unstake larger than the staked balance" do
+      create_operation({ network: "solana", action: "unstake", amount: "1001" })
 
       expect(response).to have_http_status(:unprocessable_entity)
-      expect(response.parsed_body["error"]).to eq("unknown_network")
+      expect(response.parsed_body.dig("error", "details")).to include("Amount exceeds staked balance of 1000")
     end
 
-    it "rejects invalid action with 422" do
-      post "/api/v1/stake_operations",
-           params: { network: "ethereum", action: "swap", amount: "1000" }.to_json,
-           headers: headers
+    it "marks the operation failed when the chain rejects the submission" do
+      allow_any_instance_of(ChainClients::MockChainClient).to receive(:submit_stake).and_raise(ChainClients::Error, "insufficient funds")
 
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect { create_operation(valid_params) }.not_to have_enqueued_job(StakeConfirmationJob)
+      expect(response).to have_http_status(:created)
+      expect(response.parsed_body["data"]).to include("status" => "failed", "error_message" => "insufficient funds")
     end
 
-    it "rejects zero amount" do
-      post "/api/v1/stake_operations",
-           params: { network: "ethereum", action: "stake", amount: "0" }.to_json,
-           headers: headers
-
-      expect(response).to have_http_status(:unprocessable_entity)
+    {
+      "unknown network" => [ { network: "cardano", action: "stake", amount: "1000" }, "unknown_network" ],
+      "missing network" => [ { action: "stake", amount: "1000" }, "unknown_network" ],
+      "invalid action" => [ { network: "ethereum", action: "swap", amount: "1000" }, "validation_failed" ],
+      "zero amount" => [ { network: "ethereum", action: "stake", amount: "0" }, "validation_failed" ],
+      "negative amount" => [ { network: "ethereum", action: "stake", amount: "-100" }, "validation_failed" ],
+      "decimal amount" => [ { network: "ethereum", action: "stake", amount: "10.5" }, "validation_failed" ],
+      "float JSON amount" => [ { network: "ethereum", action: "stake", amount: 10.5 }, "validation_failed" ],
+      "missing amount" => [ { network: "ethereum", action: "stake" }, "validation_failed" ]
+    }.each do |description, (params, code)|
+      it "rejects #{description} with 422 and does not persist anything" do
+        expect { create_operation(params) }.not_to change(StakeOperation, :count)
+        expect(response).to have_http_status(:unprocessable_entity)
+        expect(error_code).to eq(code)
+      end
     end
 
-    it "rejects negative amount" do
-      post "/api/v1/stake_operations",
-           params: { network: "ethereum", action: "stake", amount: "-100" }.to_json,
-           headers: headers
-
-      expect(response).to have_http_status(:unprocessable_entity)
-    end
-
-    it "rejects float amount" do
-      post "/api/v1/stake_operations",
-           params: { network: "ethereum", action: "stake", amount: "10.5" }.to_json,
-           headers: headers
-
-      expect(response).to have_http_status(:unprocessable_entity)
+    it "rejects malformed JSON with 400" do
+      post "/api/v1/stake_operations", params: "{not json", headers: auth_headers
+      expect(response).to have_http_status(:bad_request)
+      expect(error_code).to eq("bad_request")
     end
 
     it "rejects unauthorized requests" do
-      post "/api/v1/stake_operations", params: valid_params.to_json,
-           headers: { "Content-Type" => "application/json" }
+      create_operation(valid_params, headers: { "Content-Type" => "application/json" })
       expect(response).to have_http_status(:unauthorized)
+    end
+
+    describe "Idempotency-Key" do
+      let(:headers) { auth_headers.merge("Idempotency-Key" => "client-uuid-1") }
+
+      it "returns the original operation on retry instead of submitting twice" do
+        create_operation(valid_params, headers: headers)
+        original = response.parsed_body["data"]
+
+        expect(ChainClients::MockChainClient).not_to receive(:new)
+        expect { create_operation(valid_params, headers: headers) }.not_to change(StakeOperation, :count)
+
+        expect(response).to have_http_status(:ok)
+        expect(response.parsed_body["data"]).to eq(original)
+      end
+
+      it "returns 409 when the key is reused with a different payload" do
+        create_operation(valid_params, headers: headers)
+        create_operation(valid_params.merge(amount: "5"), headers: headers)
+
+        expect(response).to have_http_status(:conflict)
+        expect(error_code).to eq("idempotency_conflict")
+      end
+
+      it "scopes keys per organization" do
+        ApiKey.create!(organization: other_org, token: "other-key")
+        create_operation(valid_params, headers: headers)
+        create_operation(valid_params, headers: auth_headers("other-key").merge("Idempotency-Key" => "client-uuid-1"))
+
+        expect(response).to have_http_status(:created)
+      end
     end
   end
 
   describe "GET /api/v1/stake_operations" do
     before do
-      org.stake_operations.create!(network: eth, action: "stake", amount: "5000", status: "submitted", external_id: "mock-1")
-      org.stake_operations.create!(network: sol, action: "unstake", amount: "2000", status: "pending")
-    end
-
-    it "lists operations for the authenticated org" do
-      get "/api/v1/stake_operations", headers: headers
-      expect(response).to have_http_status(:ok)
-      expect(response.parsed_body["data"].size).to eq(2)
-    end
-
-    it "returns operations ordered by created_at desc" do
-      get "/api/v1/stake_operations", headers: headers
-      data = response.parsed_body["data"]
-      timestamps = data.map { |d| d["created_at"] }
-      expect(timestamps).to eq(timestamps.sort.reverse)
-    end
-
-    it "does not leak operations from other organizations" do
+      org.stake_operations.create!(network: eth, action: "stake", amount: "5000", status: "submitted", external_id: "mock-1", created_at: 1.minute.ago)
+      org.stake_operations.create!(network: sol, action: "unstake", amount: "200", status: "pending")
       other_org.stake_operations.create!(network: eth, action: "stake", amount: "999", status: "pending")
-      get "/api/v1/stake_operations", headers: headers
-      expect(response.parsed_body["data"].size).to eq(2) # only our org's ops
     end
 
-    it "returns amounts as strings" do
-      get "/api/v1/stake_operations", headers: headers
-      response.parsed_body["data"].each do |op|
-        expect(op["amount"]).to be_a(String)
-      end
+    it "lists only the authenticated org's operations, newest first" do
+      get "/api/v1/stake_operations", headers: auth_headers
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body["data"].map { _1["amount"] }).to eq(%w[ 200 5000 ])
+    end
+  end
+
+  describe "GET /api/v1/stake_operations/:id" do
+    it "returns the operation" do
+      operation = org.stake_operations.create!(network: eth, action: "stake", amount: "5")
+      get "/api/v1/stake_operations/#{operation.id}", headers: auth_headers
+
+      expect(response).to have_http_status(:ok)
+      expect(response.parsed_body.dig("data", "id")).to eq(operation.id)
+    end
+
+    it "returns 404 for another organization's operation" do
+      foreign = other_org.stake_operations.create!(network: eth, action: "stake", amount: "5")
+      get "/api/v1/stake_operations/#{foreign.id}", headers: auth_headers
+
+      expect(response).to have_http_status(:not_found)
+      expect(error_code).to eq("not_found")
     end
   end
 end
-

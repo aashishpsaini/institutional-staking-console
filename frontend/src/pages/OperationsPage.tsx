@@ -1,247 +1,228 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { apiGet, apiPost } from "../api";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { api } from "../api";
 import { Alert } from "../components/Alert";
 import { Badge } from "../components/Badge";
 import { CopyButton } from "../components/CopyButton";
 import { EmptyState } from "../components/EmptyState";
 import { Loading } from "../components/Loading";
 import { Pagination } from "../components/Pagination";
-import { useAsync } from "../hooks/useAsync";
-import type {
-  CreateOperationParams,
-  OperationAction,
-  OperationsResponse,
-  OperationSingleResponse
-} from "../types/operations";
-import { formatDateTime, formatTokenAmount } from "../utils/formatters";
+import { TokenAmount } from "../components/TokenAmount";
+import { useInterval } from "../hooks/useInterval";
+import { useNetworks } from "../hooks/useNetworks";
+import { usePagination } from "../hooks/usePagination";
+import { useQuery } from "../hooks/useQuery";
+import { IN_FLIGHT_STATUSES, type CreateStakeOperation, type OperationAction, type StakeOperation } from "../types/api";
+import { formatDateTime, formatTokenAmount, parseUnits } from "../utils/formatters";
 
-const initialForm: CreateOperationParams = {
-  network: "ethereum",
-  action: "stake",
-  amount: ""
-};
+const POLL_MS = 3000;
+
+const PRESETS = [
+  { label: "32 ETH validator", network: "ethereum", amount: "32" },
+  { label: "1 ETH", network: "ethereum", amount: "1" },
+  { label: "100 SOL", network: "solana", amount: "100" }
+] as const;
 
 export default function OperationsPage() {
-  const [form, setForm] = useState<CreateOperationParams>(initialForm);
-  const [operationsState, fetchOperations] = useAsync<OperationsResponse>();
-  const [submitState, submitOperation, resetSubmitState] = useAsync<OperationSingleResponse>();
-  const [validationError, setValidationError] = useState<string | null>(null);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const { networks, bySlug } = useNetworks();
+  const operations = useQuery((signal) => api.stakeOperations(signal), []);
 
-  const loadOperations = useCallback(() => {
-    void fetchOperations(() => apiGet<OperationsResponse>("/api/v1/stake_operations"));
-  }, [fetchOperations]);
+  const [networkSlug, setNetworkSlug] = useState("");
+  const [action, setAction] = useState<OperationAction>("stake");
+  const [amountInput, setAmountInput] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [lastCreated, setLastCreated] = useState<StakeOperation | null>(null);
+
+  // One Idempotency-Key per distinct payload: retrying the same request after a
+  // timeout reuses the key (server returns the original), editing the form mints a new one.
+  const attempt = useRef<{ signature: string; key: string } | null>(null);
 
   useEffect(() => {
-    loadOperations();
-  }, [loadOperations]);
+    if (!networkSlug && networks[0]) setNetworkSlug(networks[0].slug);
+  }, [networks, networkSlug]);
 
-  // Real-time polling for in-flight operations (pending or submitted)
-  useEffect(() => {
-    if (operationsState.status !== "success") return;
+  const network = bySlug(networkSlug);
+  const baseUnits = network ? parseUnits(amountInput, network.decimals) : null;
+  const amountError =
+    amountInput.trim() === "" ? null : baseUnits === null || baseUnits === "0" ? `Enter a positive amount with at most ${network?.decimals ?? 0} decimals.` : null;
 
-    const hasInFlight = operationsState.data.data.some(
-      (op) => op.status === "pending" || op.status === "submitted"
-    );
+  const rows = operations.data ?? [];
+  const hasInFlight = rows.some((op) => IN_FLIGHT_STATUSES.includes(op.status));
+  // Silent refresh: existing rows stay rendered while statuses update.
+  useInterval(operations.reload, POLL_MS, hasInFlight);
 
-    if (!hasInFlight) return;
-
-    const interval = setInterval(() => {
-      loadOperations();
-    }, 3500);
-
-    return () => clearInterval(interval);
-  }, [operationsState, loadOperations]);
-
-  const handleNetworkChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    setForm((prev) => ({ ...prev, network: event.target.value }));
-  };
-
-  const handleActionChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const action = event.target.value as OperationAction;
-    setForm((prev) => ({ ...prev, action }));
-  };
-
-  const handleAmountChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setForm((prev) => ({ ...prev, amount: event.target.value }));
-    setValidationError(null);
-  };
-
-  const setPreset = (network: string, amount: string) => {
-    setForm((prev) => ({ ...prev, network, amount }));
-    setValidationError(null);
-  };
+  const { page, setPage, pageSize, setPageSize, pageItems } = usePagination(rows, null);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const cleanAmount = form.amount.trim();
+    if (!network || !baseUnits || baseUnits === "0") return;
 
-    if (!cleanAmount || !/^[1-9]\d*$/.test(cleanAmount)) {
-      setValidationError("Amount must be a positive integer string without decimals (base units).");
-      return;
-    }
+    const payload: CreateStakeOperation = { network: network.slug, action, amount: baseUnits };
+    const signature = JSON.stringify(payload);
+    if (attempt.current?.signature !== signature) attempt.current = { signature, key: crypto.randomUUID() };
 
-    resetSubmitState();
-    const result = await submitOperation(() =>
-      apiPost<OperationSingleResponse>("/api/v1/stake_operations", {
-        network: form.network,
-        action: form.action,
-        amount: cleanAmount
-      })
-    );
-
-    if (result) {
-      setForm((prev) => ({ ...prev, amount: "" }));
-      loadOperations();
+    setIsSubmitting(true);
+    setSubmitError(null);
+    setLastCreated(null);
+    try {
+      const created = await api.createStakeOperation(payload, attempt.current.key);
+      attempt.current = null;
+      setLastCreated(created);
+      setAmountInput("");
+      operations.reload();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : "Failed to create operation");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const isSubmitting = submitState.status === "loading";
-  const operations = operationsState.status === "success" ? operationsState.data.data : [];
-
-  const paginatedOperations = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return operations.slice(startIndex, startIndex + pageSize);
-  }, [operations, currentPage, pageSize]);
-
   return (
     <section>
-      <h1>Stake Operations</h1>
-      <p className="subtitle">Execute and track institutional stake/unstake requests through the mock chain service boundary.</p>
+      <h1>Stake operations</h1>
+      <p className="subtitle">Create stake/unstake requests and track them from pending → submitted → confirmed or failed.</p>
 
-      <div className="quick-filters">
-        <span style={{ fontSize: "0.85rem", color: "#64748b", fontWeight: 600 }}>Quick Presets:</span>
-        <button
-          type="button"
-          className="btn-pill"
-          onClick={() => setPreset("ethereum", "32000000000000000000")}
-        >
-          32 ETH Validator
-        </button>
-        <button
-          type="button"
-          className="btn-pill"
-          onClick={() => setPreset("ethereum", "1000000000000000000")}
-        >
-          1 ETH
-        </button>
-        <button
-          type="button"
-          className="btn-pill"
-          onClick={() => setPreset("solana", "100000000000")}
-        >
-          100 SOL
-        </button>
-      </div>
+      <form className="stake-form" onSubmit={handleSubmit} noValidate>
+        <div className="stake-form-row">
+          <label>
+            Network
+            <select value={networkSlug} onChange={(e) => setNetworkSlug(e.target.value)} disabled={networks.length === 0}>
+              {networks.map((n) => (
+                <option key={n.slug} value={n.slug}>
+                  {n.display_name}
+                </option>
+              ))}
+            </select>
+          </label>
 
-      <form className="filters" onSubmit={handleSubmit}>
-        <label>
-          Network
-          <select value={form.network} onChange={handleNetworkChange}>
-            <option value="ethereum">Ethereum</option>
-            <option value="solana">Solana</option>
-          </select>
-        </label>
-        <label>
-          Action
-          <select value={form.action} onChange={handleActionChange}>
-            <option value="stake">Stake</option>
-            <option value="unstake">Unstake</option>
-          </select>
-        </label>
-        <label style={{ flex: 1 }}>
-          Amount (integer string in base units)
-          <input
-            placeholder="e.g. 32000000000000000000 (wei) or 100000000000 (lamports)"
-            value={form.amount}
-            onChange={handleAmountChange}
-            required
-          />
-        </label>
-        <button type="submit" disabled={isSubmitting}>
-          {isSubmitting ? "Submitting Request…" : "Create Operation"}
-        </button>
+          <div className="field">
+            <span className="field-label" id="action-label">
+              Action
+            </span>
+            <div className="segmented" role="radiogroup" aria-labelledby="action-label">
+              {(["stake", "unstake"] as const).map((option) => (
+                <button
+                  key={option}
+                  type="button"
+                  role="radio"
+                  aria-checked={action === option}
+                  className={action === option ? "active" : ""}
+                  onClick={() => setAction(option)}
+                >
+                  {option === "stake" ? "Stake" : "Unstake"}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <label className="grow">
+            Amount
+            <div className={`input-affix ${amountError ? "invalid" : ""}`}>
+              <input
+                inputMode="decimal"
+                autoComplete="off"
+                placeholder="0.0"
+                value={amountInput}
+                onChange={(e) => setAmountInput(e.target.value)}
+                aria-invalid={amountError !== null}
+                aria-describedby="amount-hint"
+              />
+              <span className="affix">{network?.symbol ?? ""}</span>
+            </div>
+          </label>
+
+          <button type="submit" className="stake-submit" disabled={isSubmitting || !baseUnits || baseUnits === "0" || !network}>
+            {isSubmitting ? "Submitting…" : action === "stake" ? "Stake" : "Unstake"}
+          </button>
+        </div>
+
+        <div className="stake-form-footer">
+          <div className="quick-fill" role="group" aria-label="Amount presets">
+            <span className="quick-filters-label">Quick fill</span>
+            {PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                type="button"
+                className="btn-pill"
+                onClick={() => {
+                  setNetworkSlug(preset.network);
+                  setAmountInput(preset.amount);
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <span id="amount-hint" className={amountError ? "field-error" : "hint"} aria-live="polite">
+            {amountError ??
+              (baseUnits && network
+                ? `Sends ${baseUnits} base units`
+                : "Enter the amount in tokens; it is converted to base units (wei / lamports)")}
+          </span>
+        </div>
       </form>
 
-      {validationError && <Alert variant="error">{validationError}</Alert>}
-      {submitState.status === "error" && <Alert variant="error">{submitState.error}</Alert>}
-      {submitState.status === "success" && (
-        <Alert variant="success">
-          Successfully submitted {submitState.data.data.action} request for {submitState.data.data.amount} on {submitState.data.data.network}. Transaction reference: {submitState.data.data.external_id}
+      {submitError && <Alert variant="error">{submitError}</Alert>}
+      {lastCreated && (
+        <Alert variant={lastCreated.status === "failed" ? "error" : "success"}>
+          {lastCreated.status === "failed"
+            ? `The chain rejected the ${lastCreated.action}: ${lastCreated.error_message ?? "unknown error"}`
+            : `${lastCreated.action === "stake" ? "Stake" : "Unstake"} of ${formatTokenAmount(lastCreated.amount, bySlug(lastCreated.network))} submitted (ref ${lastCreated.external_id}). Status updates automatically.`}
         </Alert>
       )}
 
-      {operationsState.status === "loading" && <Loading message="Loading operation records…" />}
-      {operationsState.status === "error" && <Alert variant="error">{operationsState.error}</Alert>}
+      {operations.isLoading && <Loading message="Loading operations…" />}
+      {operations.error && <Alert variant="error">{operations.error}</Alert>}
 
-      {operationsState.status === "success" && (
-        <>
-          {operations.length === 0 ? (
-            <EmptyState message="No operations have been recorded yet. Submit your first staking request using the form above." />
-          ) : (
-            <>
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Timestamp</th>
-                      <th>Network</th>
-                      <th>Action</th>
-                      <th>Amount</th>
-                      <th>External Chain ID</th>
-                      <th>Status</th>
+      {operations.data &&
+        (rows.length === 0 ? (
+          <EmptyState message="No operations yet. Submit a stake request using the form above." />
+        ) : (
+          <>
+            <div className="table-container">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Created</th>
+                    <th>Network</th>
+                    <th>Action</th>
+                    <th>Amount</th>
+                    <th>Chain reference</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageItems.map((op) => (
+                    <tr key={op.id}>
+                      <td>{formatDateTime(op.created_at)}</td>
+                      <td className="capitalize">{op.network}</td>
+                      <td className="action-cell">{op.action}</td>
+                      <td>
+                        <TokenAmount amount={op.amount} network={op.network} />
+                      </td>
+                      <td>
+                        {op.external_id ? (
+                          <div className="inline">
+                            <code>{op.external_id}</code>
+                            <CopyButton text={op.external_id} />
+                          </div>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        <Badge status={op.status} />
+                        {op.error_message && <span className="field-error">{op.error_message}</span>}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedOperations.map((operation) => (
-                      <tr key={operation.id}>
-                        <td>{formatDateTime(operation.created_at)}</td>
-                        <td>
-                          <strong style={{ textTransform: "capitalize" }}>{operation.network}</strong>
-                        </td>
-                        <td>
-                          <span style={{ textTransform: "uppercase", fontSize: "0.82em", fontWeight: 700 }}>
-                            {operation.action}
-                          </span>
-                        </td>
-                        <td>
-                          <span className="token-readable">{formatTokenAmount(operation.amount, operation.network)}</span>
-                          <span className="token-raw"><code>{operation.amount}</code></span>
-                        </td>
-                        <td>
-                          {operation.external_id ? (
-                            <div style={{ display: "flex", alignItems: "center" }}>
-                              <code>{operation.external_id}</code>
-                              <CopyButton text={operation.external_id} />
-                            </div>
-                          ) : (
-                            <span className="muted">—</span>
-                          )}
-                        </td>
-                        <td>
-                          <Badge status={operation.status}>{operation.status}</Badge>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
 
-              <Pagination
-                currentPage={currentPage}
-                totalItems={operations.length}
-                pageSize={pageSize}
-                onPageChange={setCurrentPage}
-                onPageSizeChange={(newSize) => {
-                  setPageSize(newSize);
-                  setCurrentPage(1);
-                }}
-              />
-            </>
-          )}
-        </>
-      )}
+            <Pagination currentPage={page} totalItems={rows.length} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={setPageSize} />
+          </>
+        ))}
     </section>
   );
 }

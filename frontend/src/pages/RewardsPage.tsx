@@ -1,218 +1,176 @@
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { apiGet } from "../api";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { api } from "../api";
 import { Alert } from "../components/Alert";
 import { EmptyState } from "../components/EmptyState";
 import { Loading } from "../components/Loading";
 import { Pagination } from "../components/Pagination";
-import { useAsync } from "../hooks/useAsync";
-import type { RewardFilters, RewardsResponse } from "../types/rewards";
-import { formatDate, formatTokenAmount } from "../utils/formatters";
+import { TokenAmount } from "../components/TokenAmount";
+import { useNetworks } from "../hooks/useNetworks";
+import { usePagination } from "../hooks/usePagination";
+import { useQuery } from "../hooks/useQuery";
+import type { RewardFilters } from "../types/api";
+import { daysAgo, formatDate, sumAmounts, toISODate } from "../utils/formatters";
 
-const initialFilters: RewardFilters = {
-  network: "",
-  start: "",
-  end: ""
-};
+const PRESETS = [
+  { id: "all", label: "All time", days: null },
+  { id: "7d", label: "Last 7 days", days: 7 },
+  { id: "30d", label: "Last 30 days", days: 30 }
+] as const;
+
+function presetFilters(days: number | null, network: string): RewardFilters {
+  return days === null ? { network, start: "", end: "" } : { network, start: daysAgo(days), end: toISODate(new Date()) };
+}
 
 export default function RewardsPage() {
-  const [filters, setFilters] = useState<RewardFilters>(initialFilters);
-  const [rewardsState, fetchRewards] = useAsync<RewardsResponse>();
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [activePreset, setActivePreset] = useState<string>("all");
+  const { networks } = useNetworks();
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  const loadRewards = useCallback(
-    (currentFilters: RewardFilters) => {
-      const params = new URLSearchParams();
-      if (currentFilters.network) params.set("network", currentFilters.network);
-      if (currentFilters.start) params.set("start", currentFilters.start);
-      if (currentFilters.end) params.set("end", currentFilters.end);
-
-      void fetchRewards(() => apiGet<RewardsResponse>(`/api/v1/rewards?${params.toString()}`));
-      setCurrentPage(1);
-    },
-    [fetchRewards]
+  // Applied filters live in the URL so a filtered report can be bookmarked or shared.
+  const applied: RewardFilters = useMemo(
+    () => ({
+      network: searchParams.get("network") ?? "",
+      start: searchParams.get("start") ?? "",
+      end: searchParams.get("end") ?? ""
+    }),
+    [searchParams]
   );
+  const [draft, setDraft] = useState<RewardFilters>(applied);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  useEffect(() => setDraft(applied), [applied]);
 
-  useEffect(() => {
-    loadRewards(initialFilters);
-  }, [loadRewards]);
+  const filterKey = `${applied.network}|${applied.start}|${applied.end}`;
+  const rewards = useQuery((signal) => api.rewards(applied, signal), [filterKey]);
+  const rows = rewards.data ?? [];
+  const { page, setPage, pageSize, setPageSize, pageItems } = usePagination(rows, filterKey);
 
-  const handleNetworkChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    setFilters((prev) => ({ ...prev, network: event.target.value }));
-  };
+  const totalsByNetwork = useMemo(() => {
+    const grouped = new Map<string, string[]>();
+    rows.forEach((row) => grouped.set(row.network, [...(grouped.get(row.network) ?? []), row.amount]));
+    return [...grouped].map(([network, amounts]) => ({ network, total: sumAmounts(amounts) }));
+  }, [rows]);
 
-  const handleStartChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setFilters((prev) => ({ ...prev, start: event.target.value }));
-    setActivePreset("custom");
-  };
-
-  const handleEndChange = (event: ChangeEvent<HTMLInputElement>) => {
-    setFilters((prev) => ({ ...prev, end: event.target.value }));
-    setActivePreset("custom");
+  const apply = (filters: RewardFilters) => {
+    if (filters.start && filters.end && filters.start > filters.end) {
+      setValidationError("Start date must be on or before the end date.");
+      return;
+    }
+    setValidationError(null);
+    setSearchParams(Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== "")));
   };
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    loadRewards(filters);
+    apply(draft);
   };
 
-  const applyPreset = (preset: "7d" | "30d" | "all") => {
-    setActivePreset(preset);
-    const today = new Date();
-    const endStr = today.toISOString().split("T")[0] ?? "";
-
-    if (preset === "7d") {
-      const past = new Date();
-      past.setDate(today.getDate() - 7);
-      const newFilters = { ...filters, start: past.toISOString().split("T")[0] ?? "", end: endStr };
-      setFilters(newFilters);
-      loadRewards(newFilters);
-    } else if (preset === "30d") {
-      const past = new Date();
-      past.setDate(today.getDate() - 30);
-      const newFilters = { ...filters, start: past.toISOString().split("T")[0] ?? "", end: endStr };
-      setFilters(newFilters);
-      loadRewards(newFilters);
-    } else {
-      const newFilters = { ...filters, start: "", end: "" };
-      setFilters(newFilters);
-      loadRewards(newFilters);
-    }
-  };
-
-  const handleReset = () => {
-    setFilters(initialFilters);
-    setActivePreset("all");
-    loadRewards(initialFilters);
-  };
-
-  const isLoading = rewardsState.status === "loading";
-
-  // Client-side pagination for responsive UI
-  const rows = rewardsState.status === "success" ? rewardsState.data.data : [];
-  const paginatedRows = useMemo(() => {
-    const startIndex = (currentPage - 1) * pageSize;
-    return rows.slice(startIndex, startIndex + pageSize);
-  }, [rows, currentPage, pageSize]);
+  const activePreset =
+    PRESETS.find((p) => {
+      const expected = presetFilters(p.days, applied.network);
+      return expected.start === applied.start && expected.end === applied.end;
+    })?.id ?? "custom";
 
   return (
     <section>
-      <h1>Rewards Reporting</h1>
-      <p className="subtitle">Daily reward rollups aggregated from validators, with multi-network and date-window filtering.</p>
+      <h1>Rewards</h1>
+      <p className="subtitle">Daily reward rollups per network. Amounts are summed from individual reward events.</p>
 
-        <div className="quick-filters">
-          <span style={{ fontSize: "0.85rem", color: "#64748b", fontWeight: 600 }}>Quick Range:</span>
+      <div className="quick-filters" role="group" aria-label="Date range presets">
+        <span className="quick-filters-label">Range:</span>
+        {PRESETS.map((preset) => (
           <button
+            key={preset.id}
             type="button"
-            className={`btn-pill ${activePreset === "all" ? "active" : ""}`}
-            onClick={() => applyPreset("all")}
+            className={`btn-pill ${activePreset === preset.id ? "active" : ""}`}
+            aria-pressed={activePreset === preset.id}
+            onClick={() => apply(presetFilters(preset.days, draft.network))}
           >
-            All Time
+            {preset.label}
           </button>
-          <button
-            type="button"
-            className={`btn-pill ${activePreset === "7d" ? "active" : ""}`}
-            onClick={() => applyPreset("7d")}
-          >
-            Last 7 Days
-          </button>
-          <button
-            type="button"
-            className={`btn-pill ${activePreset === "30d" ? "active" : ""}`}
-            onClick={() => applyPreset("30d")}
-          >
-            Last 30 Days
-          </button>
-        </div>
+        ))}
+      </div>
 
-        <form className="filters" onSubmit={handleSubmit}>
-          <label>
-            Network
-            <select value={filters.network} onChange={handleNetworkChange}>
-              <option value="">All Networks</option>
-              <option value="ethereum">Ethereum</option>
-              <option value="solana">Solana</option>
-            </select>
-          </label>
-          <label>
-            Start Date
-            <input type="date" value={filters.start} onChange={handleStartChange} />
-          </label>
-          <label>
-            End Date
-            <input type="date" value={filters.end} onChange={handleEndChange} />
-          </label>
-          <button type="submit" disabled={isLoading}>
-            {isLoading ? "Filtering…" : "Apply Filters"}
-          </button>
-            <button type="button" className="btn-secondary" onClick={handleReset} disabled={isLoading}>
-              Reset
-            </button>
-        </form>
+      <form className="filters" onSubmit={handleSubmit}>
+        <label>
+          Network
+          <select value={draft.network} onChange={(e) => setDraft((d) => ({ ...d, network: e.target.value }))}>
+            <option value="">All networks</option>
+            {networks.map((n) => (
+              <option key={n.slug} value={n.slug}>
+                {n.display_name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Start date
+          <input type="date" value={draft.start} max={draft.end || undefined} onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))} />
+        </label>
+        <label>
+          End date
+          <input type="date" value={draft.end} min={draft.start || undefined} onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))} />
+        </label>
+        <button type="submit" disabled={rewards.isRefreshing}>
+          {rewards.isRefreshing ? "Loading…" : "Apply filters"}
+        </button>
+        <button type="button" className="btn-secondary" onClick={() => apply({ network: "", start: "", end: "" })}>
+          Reset
+        </button>
+      </form>
 
-        {rewardsState.status === "loading" && <Loading message="Loading daily rewards rollups…" />}
-        {rewardsState.status === "error" && <Alert variant="error">{rewardsState.error}</Alert>}
+      {validationError && <Alert variant="error">{validationError}</Alert>}
+      {rewards.isLoading && <Loading message="Loading rewards…" />}
+      {rewards.error && <Alert variant="error">{rewards.error}</Alert>}
 
-        {rewardsState.status === "success" && (
+      {rewards.data &&
+        (rows.length === 0 ? (
+          <EmptyState
+            message="No rewards match these filters. Run a sync from the Portfolio page or widen the date range."
+            action={
+              <button type="button" className="btn-secondary" onClick={() => apply({ network: "", start: "", end: "" })}>
+                Clear filters
+              </button>
+            }
+          />
+        ) : (
           <>
-          {rows.length === 0 ? (
-              <EmptyState
-                message="No rewards found matching current criteria. Sync rewards from the Portfolio page or broaden your date filters."
-                action={
-                  <button type="button" className="btn-secondary" onClick={handleReset}>
-                    Clear Filters
-                  </button>
-                }
-              />
-            ) : (
-            <>
-              <div className="table-container">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Reward Date</th>
-                      <th>Network</th>
-                      <th>Daily Reward Amount</th>
-                      <th>Events Count</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedRows.map((row) => (
-                      <tr key={`${row.network}-${row.date}-${row.amount}`}>
-                        <td>{formatDate(row.date)}</td>
-                        <td>
-                          <strong style={{ textTransform: "capitalize" }}>{row.network}</strong>
-                        </td>
-                        <td>
-                          <span className="token-readable">{formatTokenAmount(row.amount, row.network)}</span>
-                          <span className="token-raw"><code>{row.amount}</code></span>
-                        </td>
-                        <td>
-                          <span className="badge" style={{ background: "#f1f5f9", color: "#334155" }}>
-                            {row.event_count ?? 1} events
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+            <div className="summary-row" aria-label="Totals for current filters">
+              {totalsByNetwork.map(({ network, total }) => (
+                <div key={network} className="summary-item">
+                  <span className="stat-title">{network} total</span>
+                  <TokenAmount amount={total} network={network} />
+                </div>
+              ))}
+            </div>
 
-              <Pagination
-                currentPage={currentPage}
-                totalItems={rows.length}
-                pageSize={pageSize}
-                onPageChange={setCurrentPage}
-                onPageSizeChange={(newSize) => {
-                  setPageSize(newSize);
-                  setCurrentPage(1);
-                }}
-              />
-            </>
-            )}
+            <div className="table-container" aria-busy={rewards.isRefreshing}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Network</th>
+                    <th>Daily reward</th>
+                    <th>Events</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pageItems.map((row) => (
+                    <tr key={`${row.network}-${row.date}`}>
+                      <td>{formatDate(row.date)}</td>
+                      <td className="capitalize">{row.network}</td>
+                      <td>
+                        <TokenAmount amount={row.amount} network={row.network} />
+                      </td>
+                      <td>{row.event_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <Pagination currentPage={page} totalItems={rows.length} pageSize={pageSize} onPageChange={setPage} onPageSizeChange={setPageSize} />
           </>
-        )}
+        ))}
     </section>
   );
 }
