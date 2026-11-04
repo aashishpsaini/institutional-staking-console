@@ -1,3 +1,9 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 :root {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: #1e293b;
@@ -181,6 +187,58 @@ tr:hover td {
   padding: 1rem 1.25rem;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
+}
+
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+  line-height: 1.25;
+}
+
+.label-text,
+.field-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #475569;
+  line-height: 1.25;
+  display: block;
+}
+
+.filters input,
+.filters select {
+  height: 2.4rem;
+  font-size: 0.9rem;
+}
+
+.filters input {
+  padding: 0 0.75rem;
+}
+
+.filters select {
+  padding: 0 2.25rem 0 0.75rem;
+}
+
+.filters button {
+  height: 2.4rem;
+  padding: 0 1rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+input[type="date"] {
+  display: inline-flex;
+  align-items: center;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
 }
 
 .quick-filters {

@@ -85,7 +85,7 @@ export default function OperationsPage() {
       <form className="stake-form" onSubmit={handleSubmit} noValidate>
         <div className="stake-form-row">
           <label>
-            Network
+            <span className="label-text">Network</span>
             <select value={networkSlug} onChange={(e) => setNetworkSlug(e.target.value)} disabled={networks.length === 0}>
               {networks.map((n) => (
                 <option key={n.slug} value={n.slug}>
@@ -116,7 +116,7 @@ export default function OperationsPage() {
           </div>
 
           <label className="grow">
-            Amount
+            <span className="label-text">Amount</span>
             <div className={`input-affix ${amountError ? "invalid" : ""}`}>
               <input
                 inputMode="decimal"

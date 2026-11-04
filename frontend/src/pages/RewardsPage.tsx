@@ -92,7 +92,7 @@ export default function RewardsPage() {
 
       <form className="filters" onSubmit={handleSubmit}>
         <label>
-          Network
+          <span className="label-text">Network</span>
           <select value={draft.network} onChange={(e) => setDraft((d) => ({ ...d, network: e.target.value }))}>
             <option value="">All networks</option>
             {networks.map((n) => (
@@ -103,11 +103,11 @@ export default function RewardsPage() {
           </select>
         </label>
         <label>
-          Start date
+          <span className="label-text">Start date</span>
           <input type="date" value={draft.start} max={draft.end || undefined} onChange={(e) => setDraft((d) => ({ ...d, start: e.target.value }))} />
         </label>
         <label>
-          End date
+          <span className="label-text">End date</span>
           <input type="date" value={draft.end} min={draft.start || undefined} onChange={(e) => setDraft((d) => ({ ...d, end: e.target.value }))} />
         </label>
         <button type="submit" disabled={rewards.isRefreshing}>
